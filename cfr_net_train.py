@@ -5,6 +5,7 @@ import getopt
 import random
 import datetime
 import traceback
+from tqdm import tqdm
 
 import cfr.cfr_net as cfr
 from cfr.util import *
@@ -29,7 +30,7 @@ tf.app.flags.DEFINE_integer('batch_norm', 0, """Whether to use batch normalizati
 tf.app.flags.DEFINE_string('normalization', 'none', """How to normalize representation (after batch norm). none/bn_fixed/divide/project """)
 tf.app.flags.DEFINE_float('rbf_sigma', 0.1, """RBF MMD sigma """)
 tf.app.flags.DEFINE_integer('experiments', 1, """Number of experiments. """)
-tf.app.flags.DEFINE_integer('iterations', 2000, """Number of iterations. """)
+tf.app.flags.DEFINE_integer('iterations', 3000, """Number of iterations. """)
 tf.app.flags.DEFINE_float('weight_init', 0.01, """Weight initialization scale. """)
 tf.app.flags.DEFINE_float('lrate_decay', 0.95, """Decay of learning rate every 100 iterations """)
 tf.app.flags.DEFINE_integer('wass_iterations', 20, """Number of iterations in Wasserstein computation. """)
@@ -54,6 +55,9 @@ tf.app.flags.DEFINE_integer('save_rep', 0, """Save representations after trainin
 tf.app.flags.DEFINE_float('val_part', 0, """Validation part. """)
 tf.app.flags.DEFINE_boolean('split_output', 0, """Whether to split output layers between treated and control. """)
 tf.app.flags.DEFINE_boolean('reweight_sample', 1, """Whether to reweight sample for prediction loss with average treatment probability. """)
+
+tf.app.flags.DEFINE_float('gnoise', 0., """Gaussian Noise Scale. """)
+tf.app.flags.DEFINE_float('drop', 0., """Random Drop rate""")
 
 if FLAGS.sparse:
     import scipy.sparse as sparse
@@ -117,6 +121,30 @@ def train(CFR, sess, train_step, D, I_valid, D_test, logfile, i_exp):
     reps = []
     reps_test = []
 
+    """make noise"""
+    if FLAGS.gnoise > 0:
+        gnoise_train = np.random.normal(scale=FLAGS.gnoise, size=D['x'].shape)
+    else:
+        gnoise_train = np.zeros_like(D['x'])
+    has_test = False
+    if not FLAGS.data_test == '': # if test set supplied
+        has_test = True
+    if has_test:
+        if FLAGS.gnoise > 0:
+            gnoise_test = np.random.normal(scale=FLAGS.gnoise, size=D_test['x'].shape)
+        else:
+            gnoise_test = np.zeros_like(D_test['x'])
+    if D["HAVE_TRUTH"]: #idhp
+        gnoise_train[:,6:] = 0.
+        if has_test:
+            gnoise_test[:,6:] = 0.
+    else: # jobs
+        jobs_cont_cov = [0,1,6,7,8,9,10,11,12,15]
+        jobs_bin_cov = [ i for i in range(gnoise_train.shape[1]) if i not in jobs_cont_cov]
+        gnoise_train[:,jobs_bin_cov] = 0.
+        if has_test:
+            gnoise_test[:,jobs_bin_cov] = 0.
+
     ''' Train for multiple iterations '''
     for i in range(FLAGS.iterations):
 
@@ -177,16 +205,16 @@ def train(CFR, sess, train_step, D, I_valid, D_test, logfile, i_exp):
         ''' Compute predictions every M iterations '''
         if (FLAGS.pred_output_delay > 0 and i % FLAGS.pred_output_delay == 0) or i==FLAGS.iterations-1:
 
-            y_pred_f = sess.run(CFR.output, feed_dict={CFR.x: D['x'], \
+            y_pred_f = sess.run(CFR.output, feed_dict={CFR.x: D['x']+gnoise_train, \
                 CFR.t: D['t'], CFR.do_in: 1.0, CFR.do_out: 1.0})
-            y_pred_cf = sess.run(CFR.output, feed_dict={CFR.x: D['x'], \
+            y_pred_cf = sess.run(CFR.output, feed_dict={CFR.x: D['x']+gnoise_train, \
                 CFR.t: 1-D['t'], CFR.do_in: 1.0, CFR.do_out: 1.0})
             preds_train.append(np.concatenate((y_pred_f, y_pred_cf),axis=1))
 
             if D_test is not None:
-                y_pred_f_test = sess.run(CFR.output, feed_dict={CFR.x: D_test['x'], \
+                y_pred_f_test = sess.run(CFR.output, feed_dict={CFR.x: D_test['x']+gnoise_test, \
                     CFR.t: D_test['t'], CFR.do_in: 1.0, CFR.do_out: 1.0})
-                y_pred_cf_test = sess.run(CFR.output, feed_dict={CFR.x: D_test['x'], \
+                y_pred_cf_test = sess.run(CFR.output, feed_dict={CFR.x: D_test['x']+gnoise_test, \
                     CFR.t: 1-D_test['t'], CFR.do_in: 1.0, CFR.do_out: 1.0})
                 preds_test.append(np.concatenate((y_pred_f_test, y_pred_cf_test),axis=1))
 
@@ -250,14 +278,19 @@ def run(outdir):
     if has_test:
         log(logfile, 'Test data:     ' + datapath_test)
     D = load_data(datapath)
+
+
     D_test = None
     if has_test:
         D_test = load_data(datapath_test)
 
+
     log(logfile, 'Loaded data with shape [%d,%d]' % (D['n'], D['dim']))
 
     ''' Start Session '''
-    sess = tf.Session()
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    sess= tf.Session(config=config)
 
     ''' Initialize input placeholders '''
     x  = tf.placeholder("float", shape=[None, D['dim']], name='x') # Features
@@ -318,7 +351,7 @@ def run(outdir):
         n_experiments = FLAGS.repetitions
 
     ''' Run for all repeated experiments '''
-    for i_exp in range(1,n_experiments+1):
+    for i_exp in tqdm(range(1,n_experiments+1), desc="Experiments"):
 
         if FLAGS.repetitions>1:
             log(logfile, 'Training on repeated initialization %d/%d...' % (i_exp, FLAGS.repetitions))
@@ -414,7 +447,7 @@ def run(outdir):
 def main(argv=None):  # pylint: disable=unused-argument
     """ Main entry point """
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S-%f")
-    outdir = FLAGS.outdir+'/results_'+timestamp+'/'
+    outdir = FLAGS.outdir+'/results_{}_{}/'.format(timestamp, FLAGS.gnoise)
     os.mkdir(outdir)
 
     try:

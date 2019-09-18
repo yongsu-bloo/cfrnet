@@ -14,7 +14,7 @@ FONTSIZE = 16
 EARLY_STOP_SET_CONT = 'valid'
 EARLY_STOP_CRITERION_CONT = 'objective'
 CONFIG_CHOICE_SET_CONT = 'valid'
-CONFIG_CRITERION_CONT = 'pehe_nn'
+CONFIG_CRITERION_CONT = 'rmse_fact'#'pehe_nn'
 CORR_CRITERION_CONT = 'pehe'
 CORR_CHOICE_SET_CONT = 'test'
 
@@ -66,9 +66,9 @@ def cap(s):
 
 def table_str_bin(result_set, row_labels, labels_long=None, binary=False):
     if binary:
-        cols = ['policy_risk', 'bias_att', 'err_fact', 'objective', 'pehe_nn']
+        cols = ['policy_risk', 'bias_att', 'err_fact', 'objective', 'pehe_nn', 'auc']
     else:
-        cols = ['pehe', 'bias_ate', 'rmse_fact', 'rmse_ite', 'objective', 'pehe_nn']
+        cols = ['pehe', 'bias_ate', 'rmse_fact', 'rmse_ite', 'objective', 'pehe_nn','auc','roc_auc','fact_auc','fact_roc_auc']
 
     cols = [c for c in cols if c in result_set[0]]
 
@@ -156,7 +156,7 @@ def select_parameters(results, configs, stop_set, stop_criterion, choice_set, ch
 
 def plot_option_correlation(output_dir, diff_opts, results, configs,
         choice_set, choice_criterion, filter_str=''):
-
+    pass
     topk = int(np.min([CURVE_TOP_K, len(configs)]))
 
     opts_dir = '%s/opts%s' % (output_dir, filter_str)
@@ -254,8 +254,8 @@ def plot_evaluation_cont(results, configs, output_dir, data_train_path, data_tes
         f.write(eval_str)
 
     ''' Plot option correlation '''
-    plot_option_correlation(output_dir, diff_opts, results_all, configs_all,
-        CORR_CHOICE_SET_CONT, CORR_CRITERION_CONT, filter_str)
+    # plot_option_correlation(output_dir, diff_opts, results_all, configs_all,
+    #     CORR_CHOICE_SET_CONT, CORR_CRITERION_CONT, filter_str)
 
 
 def plot_evaluation_bin(results, configs, output_dir, data_train_path, data_test_path, filters=None):
@@ -311,32 +311,33 @@ def plot_evaluation_bin(results, configs, output_dir, data_train_path, data_test
     colors = 'rgbcmyk'
     topk = int(np.min([CURVE_TOP_K, len(configs)]))
 
-    for eval_set in ['train', 'valid', 'test']:
-        pc = np.mean(results_all[0][eval_set]['policy_curve'],0)
-        x = np.array(range(len(pc))).astype(np.float32)/(len(pc)-1)
-        for i in range(topk):
-            plot_with_fill(x, results_all[i][eval_set]['policy_curve'], axis=0, std_error=True, color=colors[i])
-        plt.plot([0,1], [pc[0], pc[-1]], '--k', linewidth=2)
-
-
-        p = propensity[eval_set]
-        x_lim = plt.xlim()
-        y_lim = plt.ylim()
-        plt.plot([p,p], y_lim, ':k')
-        plt.text(p+0.01*(x_lim[1]-x_lim[0]),y_lim[0]+0.05*(y_lim[1]-y_lim[0]), r'$p(t)$', fontsize=14)
-        plt.ylim(y_lim)
-
-        plt.xlabel(r'$\mathrm{Inclusion\/rate}$', fontsize=FONTSIZE)
-        plt.ylabel(r'$\mathrm{Policy\/value}$', fontsize=FONTSIZE)
-        plt.title(r'$\mathrm{Policy\/curve\/%s\/(w.\/early\/stopping)}$' % eval_set)
-        plt.legend(['Configuration %d' % i for i in range(topk)], fontsize=FONTSIZE_LGND)
-        plot_format()
-        plt.savefig('%s/policy_curve%s.%s.pdf' % (output_dir, filter_str, eval_set))
-        plt.close()
-
-    ''' Plot option correlation '''
-    plot_option_correlation(output_dir, diff_opts, results_all, configs_all,
-        CORR_CHOICE_SET_BIN, CORR_CRITERION_BIN, filter_str)
+    #
+    # for eval_set in ['train', 'valid', 'test']:
+    #     pc = np.mean(results_all[0][eval_set]['policy_curve'],0)
+    #     x = np.array(range(len(pc))).astype(np.float32)/(len(pc)-1)
+    #     for i in range(topk):
+    #         plot_with_fill(x, results_all[i][eval_set]['policy_curve'], axis=0, std_error=True, color=colors[i])
+    #     plt.plot([0,1], [pc[0], pc[-1]], '--k', linewidth=2)
+    #
+    #
+    #     p = propensity[eval_set]
+    #     x_lim = plt.xlim()
+    #     y_lim = plt.ylim()
+    #     plt.plot([p,p], y_lim, ':k')
+    #     plt.text(p+0.01*(x_lim[1]-x_lim[0]),y_lim[0]+0.05*(y_lim[1]-y_lim[0]), r'$p(t)$', fontsize=14)
+    #     plt.ylim(y_lim)
+    #
+    #     plt.xlabel(r'$\mathrm{Inclusion\/rate}$', fontsize=FONTSIZE)
+    #     plt.ylabel(r'$\mathrm{Policy\/value}$', fontsize=FONTSIZE)
+    #     plt.title(r'$\mathrm{Policy\/curve\/%s\/(w.\/early\/stopping)}$' % eval_set)
+    #     plt.legend(['Configuration %d' % i for i in range(topk)], fontsize=FONTSIZE_LGND)
+    #     plot_format()
+    #     plt.savefig('%s/policy_curve%s.%s.pdf' % (output_dir, filter_str, eval_set))
+    #     plt.close()
+    #
+    # ''' Plot option correlation '''
+    # plot_option_correlation(output_dir, diff_opts, results_all, configs_all,
+    #     CORR_CHOICE_SET_BIN, CORR_CRITERION_BIN, filter_str)
 
 
 def plot_cfr_evaluation_bin(results, configs, output_dir):

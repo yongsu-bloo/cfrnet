@@ -2,6 +2,8 @@ import sys
 import os
 import numpy as np
 from subprocess import call
+from tqdm import tqdm
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' # shut up tensorflow
 
 def load_config(cfg_file):
     cfg = {}
@@ -51,15 +53,16 @@ def save_used_cfg(cfg, used_cfg_file):
 
 def run(cfg_file, num_runs):
     configs = load_config(cfg_file)
-
     outdir = configs['outdir'][0]
+    if not os.path.exists(outdir):
+        os.mkdir(outdir)
     used_cfg_file = '%s/used_configs.txt' % outdir
 
     if not os.path.isfile(used_cfg_file):
         f = open(used_cfg_file, 'w')
         f.close()
 
-    for i in range(num_runs):
+    for i in tqdm(range(num_runs)):
         cfg = sample_config(configs)
         if is_used_cfg(cfg, used_cfg_file):
             print 'Configuration used, skipping'
@@ -74,6 +77,10 @@ def run(cfg_file, num_runs):
 
         flags = ' '.join('--%s %s' % (k,str(v)) for k,v in cfg.iteritems())
         call('python cfr_net_train.py %s' % flags, shell=True)
+
+        # Todo: fix
+        # if i % int(cfg['evaluate_period']) == 0 or i == num_runs-1:
+        #     call('python evaluate.py %s %s' % (cfg_file, cfg['overwrite']))
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:

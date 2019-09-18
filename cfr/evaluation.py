@@ -1,16 +1,22 @@
 import numpy as np
-import os
+import os, time, random
+from sklearn import metrics
+from sklearn.metrics import roc_auc_score
+
 
 from logger import Logger as Log
 from loader import *
 
-POL_CURVE_RES = 40
+POL_CURVE_RES = 10
 
 class NaNException(Exception):
     pass
 
 
 def policy_range(n, res=10):
+    if n < res:
+        res = 4
+        print "n is smaller than res. Set res = {}".format(res)
     step = int(float(n)/float(res))
     n_range = range(0,int(n+1),step)
     if not n_range[-1] == n:
@@ -106,7 +112,7 @@ def cf_nn(x, t):
     return nn_t, nn_c
 
 def pehe_nn(yf_p, ycf_p, y, x, t, nn_t=None, nn_c=None):
-    if nn_t is None or nn_c is None:
+    if np.any(np.isnan(nn_t)) or np.any(np.isnan(nn_c)) or nn_t is None or nn_c is None:
         nn_t, nn_c = cf_nn(x,t)
 
     It = np.array(np.where(t==1))[0,:]
@@ -133,15 +139,14 @@ def pehe_nn(yf_p, ycf_p, y, x, t, nn_t=None, nn_c=None):
     return pehe_nn
 
 def evaluate_bin_att(predictions, data, i_exp, I_subset=None,
-                     compute_policy_curve=False, nn_t=None, nn_c=None):
-
+                     compute_policy_curve=False, nn_t=None, nn_c=None, cfg=None):
+    # jobs
     x = data['x'][:,:,i_exp]
     t = data['t'][:,i_exp]
     e = data['e'][:,i_exp]
     yf = data['yf'][:,i_exp]
     yf_p = predictions[:,0]
     ycf_p = predictions[:,1]
-
     att = np.mean(yf[t>0]) - np.mean(yf[(1-t+e)>1])
 
     if not I_subset is None:
@@ -151,6 +156,14 @@ def evaluate_bin_att(predictions, data, i_exp, I_subset=None,
         yf_p = yf_p[I_subset]
         ycf_p = ycf_p[I_subset]
         yf = yf[I_subset]
+    if 'drop' in cfg and cfg['drop'] > 0:
+        Drop_I = random.sample(range(0, len(x)), int(cfg['drop'] * len(x)))
+        x = x[Drop_I,:]
+        t = t[Drop_I]
+        e = e[Drop_I]
+        yf_p = yf_p[Drop_I]
+        ycf_p = ycf_p[Drop_I]
+        yf = yf[Drop_I]
 
     yf_p_b = 1.0*(yf_p>0.5)
     ycf_p_b = 1.0*(ycf_p>0.5)
@@ -179,7 +192,8 @@ def evaluate_bin_att(predictions, data, i_exp, I_subset=None,
     policy_value, policy_curve = \
         policy_val(t[e>0], yf[e>0], eff_pred[e>0], compute_policy_curve)
 
-    pehe_appr = pehe_nn(yf_p, ycf_p, yf, x, t, nn_t, nn_c)
+    # pehe_appr = pehe_nn(yf_p, ycf_p, yf, x, t, nn_t, nn_c)
+    pehe_appr = np.nan
 
     return {'ate_pred': ate_pred, 'att_pred': att_pred,
             'bias_att': bias_att, 'atc_pred': atc_pred,
@@ -187,65 +201,175 @@ def evaluate_bin_att(predictions, data, i_exp, I_subset=None,
             'policy_value': policy_value, 'policy_risk': 1-policy_value,
             'policy_curve': policy_curve, 'pehe_nn': pehe_appr}
 
+
 def evaluate_cont_ate(predictions, data, i_exp, I_subset=None,
-    compute_policy_curve=False, nn_t=None, nn_c=None):
+    compute_policy_curve=False, nn_t=None, nn_c=None, cfg=None):
+    if data['HAVE_TRUTH']: # ihdp
+        x = data['x'][:,:,i_exp]
+        t = data['t'][:,i_exp]
+        yf = data['yf'][:,i_exp]
+        ycf = data['ycf'][:,i_exp]
+        try:
+            if data['mu0'].shape[0] == x.shape[0]:
+                mu0 = data['mu0'][:, i_exp]
+                mu1 = data['mu1'][:, i_exp]
+            else:
+                mu0 = data['yf'][:, i_exp] * (1 - t) + data['ycf'][:, i_exp] * t
+                mu1 = data['ycf'][:, i_exp] * (1 - t) + data['yf'][:, i_exp] * t
+        except:
+            mu0 = data['yf'][:, i_exp] * (1 - t) + data['ycf'][:, i_exp] * t
+            mu1 = data['ycf'][:, i_exp] * (1 - t) + data['yf'][:, i_exp] * t
 
-    x = data['x'][:,:,i_exp]
-    t = data['t'][:,i_exp]
-    yf = data['yf'][:,i_exp]
-    ycf = data['ycf'][:,i_exp]
-    mu0 = data['mu0'][:,i_exp]
-    mu1 = data['mu1'][:,i_exp]
-    yf_p = predictions[:,0]
-    ycf_p = predictions[:,1]
 
-    if not I_subset is None:
-        x = x[I_subset,]
-        t = t[I_subset]
-        yf_p = yf_p[I_subset]
-        ycf_p = ycf_p[I_subset]
-        yf = yf[I_subset]
-        ycf = ycf[I_subset]
-        mu0 = mu0[I_subset]
-        mu1 = mu1[I_subset]
+        yf_p = predictions[:,0]
+        ycf_p = predictions[:,1]
 
-    eff = mu1-mu0
 
-    rmse_fact = np.sqrt(np.mean(np.square(yf_p-yf)))
-    rmse_cfact = np.sqrt(np.mean(np.square(ycf_p-ycf)))
+        if not I_subset is None:
+            x = x[I_subset,]
+            t = t[I_subset]
+            yf_p = yf_p[I_subset]
+            ycf_p = ycf_p[I_subset]
+            yf = yf[I_subset]
+            ycf = ycf[I_subset]
+            mu0 = mu0[I_subset]
+            mu1 = mu1[I_subset]
+        if 'drop' in cfg and cfg['drop'] > 0:
+            Drop_I = random.sample(range(0, len(x)), int(cfg['drop'] * len(x)))
+            x = x[Drop_I,]
+            t = t[Drop_I]
+            yf_p = yf_p[Drop_I]
+            ycf_p = ycf_p[Drop_I]
+            yf = yf[Drop_I]
+            ycf = ycf[Drop_I]
+            mu0 = mu0[Drop_I]
+            mu1 = mu1[Drop_I]
+        eff = mu1-mu0
 
-    eff_pred = ycf_p - yf_p;
-    eff_pred[t>0] = -eff_pred[t>0];
+        rmse_fact = np.sqrt(np.mean(np.square(yf_p-yf)))
+        rmse_cfact = np.sqrt(np.mean(np.square(ycf_p-ycf)))
 
-    ite_pred = ycf_p - yf
-    ite_pred[t>0] = -ite_pred[t>0]
-    rmse_ite = np.sqrt(np.mean(np.square(ite_pred-eff)))
+        eff_pred = ycf_p - yf_p;
+        eff_pred[t>0] = -eff_pred[t>0];
 
-    ate_pred = np.mean(eff_pred)
-    bias_ate = ate_pred-np.mean(eff)
+        ite_pred = ycf_p - yf
+        ite_pred[t>0] = -ite_pred[t>0]
+        rmse_ite = np.sqrt(np.mean(np.square(ite_pred-eff)))
 
-    att_pred = np.mean(eff_pred[t>0])
-    bias_att = att_pred - np.mean(eff[t>0])
+        ate_pred = np.mean(eff_pred)
+        bias_ate = ate_pred-np.mean(eff)
 
-    atc_pred = np.mean(eff_pred[t<1])
-    bias_atc = atc_pred - np.mean(eff[t<1])
+        att_pred = np.mean(eff_pred[t>0])
+        bias_att = att_pred - np.mean(eff[t>0])
 
-    pehe = np.sqrt(np.mean(np.square(eff_pred-eff)))
+        atc_pred = np.mean(eff_pred[t<1])
+        bias_atc = atc_pred - np.mean(eff[t<1])
 
-    pehe_appr = pehe_nn(yf_p, ycf_p, yf, x, t, nn_t, nn_c)
+        pehe = np.sqrt(np.mean(np.square(eff_pred-eff)))
 
-    # @TODO: Not clear what this is for continuous data
-    #policy_value, policy_curve = policy_val(t, yf, eff_pred, compute_policy_curve)
+        # pehe_appr = pehe_nn(yf_p, ycf_p, yf, x, t, nn_t, nn_c)
+        pehe_appr = np.nan
+        auc = np.nan
+        roc_auc = np.nan
+        fact_auc = np.nan
+        fact_roc_auc = np.nan
 
-    return {'ate_pred': ate_pred, 'att_pred': att_pred,
-            'atc_pred': atc_pred, 'bias_ate': bias_ate,
-            'bias_att': bias_att, 'bias_atc': bias_atc,
-            'rmse_fact': rmse_fact, 'rmse_cfact': rmse_cfact,
-            'pehe': pehe, 'rmse_ite': rmse_ite, 'pehe_nn': pehe_appr}
-            #'policy_value': policy_value, 'policy_curve': policy_curve}
+        return {'ate_pred': ate_pred, 'att_pred': att_pred,
+                'atc_pred': atc_pred, 'bias_ate': bias_ate,
+                'bias_att': bias_att, 'bias_atc': bias_atc,
+                'rmse_fact': rmse_fact, 'rmse_cfact': rmse_cfact,
+                'pehe': pehe, 'rmse_ite': rmse_ite, 'pehe_nn': pehe_appr, 'auc': auc,'roc_auc':roc_auc,
+                    'fact_auc':fact_auc,'fact_roc_auc':fact_roc_auc}
+    else:
+        # twins -> roc_auc
+        x = data['x'][:, :, i_exp]
+        t = data['t'][:, i_exp]
+        yf = data['yf'][:, i_exp]
+        ycf = data['ycf'][:, i_exp]
+        try:
+            mu0 = data['mu0'][range(x.shape[0]), i_exp]
+            mu1 = data['mu1'][range(x.shape[0]), i_exp]
+        except:
+            mu0 = data['yf'][:, i_exp] * (1 - t) + data['ycf'][:, i_exp] * t
+            mu1 = data['ycf'][:, i_exp] * (1 - t) + data['yf'][:, i_exp] * t
+
+        yf_p = predictions[:, 0]
+        ycf_p = predictions[:, 1]
+
+
+
+        if not I_subset is None:
+            x = x[I_subset,]
+            t = t[I_subset]
+            yf_p = yf_p[I_subset]
+            ycf_p = ycf_p[I_subset]
+            yf = yf[I_subset]
+            ycf = ycf[I_subset]
+            mu0 = mu0[I_subset]
+            mu1 = mu1[I_subset]
+        if 'drop' in cfg and cfg['drop'] > 0:
+            Drop_I = random.sample(range(0, len(x)), int(cfg['drop'] * len(x)))
+            x = x[Drop_I,]
+            t = t[Drop_I]
+            yf_p = yf_p[Drop_I]
+            ycf_p = ycf_p[Drop_I]
+            yf = yf[Drop_I]
+            ycf = ycf[Drop_I]
+            mu0 = mu0[Drop_I]
+            mu1 = mu1[Drop_I]
+        eff = mu1 - mu0
+
+        rmse_fact = np.sqrt(np.mean(np.square(yf_p - yf)))
+        rmse_cfact = np.sqrt(np.mean(np.square(ycf_p - ycf)))
+
+        eff_pred = ycf_p - yf_p;
+        eff_pred[t > 0] = -eff_pred[t > 0];
+
+        ite_pred = ycf_p - yf
+        ite_pred[t > 0] = -ite_pred[t > 0]
+        rmse_ite = np.sqrt(np.mean(np.square(ite_pred - eff)))
+
+        ate_pred = np.mean(eff_pred)
+        bias_ate = ate_pred - np.mean(eff)
+
+        att_pred = np.mean(eff_pred[t > 0])
+        bias_att = att_pred - np.mean(eff[t > 0])
+
+        atc_pred = np.mean(eff_pred[t < 1])
+        bias_atc = atc_pred - np.mean(eff[t < 1])
+
+        pehe = np.sqrt(np.mean(np.square(eff_pred - eff)))
+
+        pehe_appr = np.nan
+        # pehe_appr = pehe_nn(yf_p, ycf_p, yf, x, t, nn_t, nn_c)
+
+        y_0_p = yf_p * (1 - t) + ycf_p * t
+        y_1_p = yf_p * t + ycf_p* (1-t)
+
+        y_label = np.concatenate((mu0, mu1), axis=0)
+        y_label_pred = np.concatenate((y_0_p, y_1_p), axis=0)
+
+        fpr, tpr, thresholds = metrics.roc_curve(y_label, y_label_pred)
+        auc = metrics.auc(fpr, tpr)
+        roc_auc = roc_auc_score(y_label, y_label_pred)
+
+        fact_fpr, fact_tpr, fact_thresholds = metrics.roc_curve(yf, yf_p)
+        fact_auc = metrics.auc(fpr, tpr)
+        fact_roc_auc = roc_auc_score(yf, yf_p)
+
+
+        # @TODO: Not clear what this is for continuous data
+        # policy_value, policy_curve = policy_val(t, yf, eff_pred, compute_policy_curve)
+
+        return {'ate_pred': ate_pred, 'att_pred': att_pred,
+                'atc_pred': atc_pred, 'bias_ate': bias_ate,
+                'bias_att': bias_att, 'bias_atc': bias_atc,
+                'rmse_fact': rmse_fact, 'rmse_cfact': rmse_cfact,
+                'pehe': pehe, 'rmse_ite': rmse_ite, 'pehe_nn': pehe_appr, 'auc': auc,'roc_auc':roc_auc,
+                'fact_auc':fact_auc,'fact_roc_auc':fact_roc_auc }
 
 def evaluate_result(result, data, validation=False,
-        multiple_exps=False, binary=False):
+        multiple_exps=False, binary=False, cfg=None):
 
     predictions = result['pred']
 
@@ -259,44 +383,49 @@ def evaluate_result(result, data, validation=False,
 
     eval_results = []
     #Loop over output_times
+    ct1 = time.time()
     for i_out in range(n_outputs):
         eval_results_out = []
 
-        if not multiple_exps and not validation:
-            nn_t, nn_c = cf_nn(data['x'][:,:,0], data['t'][:,0])
+        # if not multiple_exps and not validation:
+        #     nn_t, nn_c = cf_nn(data['x'][:,:,0], data['t'][:,0])
 
 
         #Loop over repeated experiments
+        rt1 = time.time()
         for i_rep in range(n_rep):
-
             if validation:
-                I_valid_rep = I_valid[i_rep,:]
+                I_valid_rep = I_valid[i_rep]
             else:
                 I_valid_rep = None
 
             if multiple_exps:
                 i_exp = i_rep
-                if validation:
-                    nn_t, nn_c = cf_nn(data['x'][I_valid_rep,:,i_exp], data['t'][I_valid_rep,i_exp])
-                else:
-                    nn_t, nn_c = cf_nn(data['x'][:,:,i_exp], data['t'][:,i_exp])
+                # if validation:
+                #     nn_t, nn_c = cf_nn(data['x'][I_valid_rep,:,i_exp], data['t'][I_valid_rep,i_exp])
+                # else:
+                #     nn_t, nn_c = cf_nn(data['x'][:,:,i_exp], data['t'][:,i_exp])
+
             else:
                 i_exp = 0
+            nn_t = np.nan
+            nn_c = np.nan
 
-            if validation and not multiple_exps:
-                nn_t, nn_c = cf_nn(data['x'][I_valid_rep,:,i_exp], data['t'][I_valid_rep,i_exp])
-
+            # if validation and not multiple_exps:
+            #     nn_t, nn_c = cf_nn(data['x'][I_valid_rep,:,i_exp], data['t'][I_valid_rep,i_exp])
             if binary:
                 eval_result = evaluate_bin_att(predictions[:,:,i_rep,i_out],
-                    data, i_exp, I_valid_rep, compute_policy_curve, nn_t=nn_t, nn_c=nn_c)
+                    data, i_exp, I_valid_rep, compute_policy_curve, nn_t=nn_t, nn_c=nn_c, cfg=cfg)
             else:
                 eval_result = evaluate_cont_ate(predictions[:,:,i_rep,i_out],
-                    data, i_exp, I_valid_rep, compute_policy_curve, nn_t=nn_t, nn_c=nn_c)
-
+                    data, i_exp, I_valid_rep, compute_policy_curve, nn_t=nn_t, nn_c=nn_c, cfg=cfg)
             eval_results_out.append(eval_result)
 
+        rt2 = time.time()
+        # print "Loop over repeated experiments: {:.3f}".format(rt2-rt1)
         eval_results.append(eval_results_out)
-
+    ct2 = time.time()
+    # print "Loop over output_times: {:.3f}".format(ct2-ct1)
     # Reformat into dict
     eval_dict = {}
     keys = eval_results[0][0].keys()
@@ -308,6 +437,7 @@ def evaluate_result(result, data, validation=False,
     # Gather loss
     # Shape [times, types, reps]
     # Types: obj_loss, f_error, cf_error, imb_err, valid_f_error, valid_imb, valid_obj
+    ot1 = time.time()
     if 'loss' in result.keys() and result['loss'].shape[1]>=6:
         losses = result['loss']
         n_loss_outputs = losses.shape[0]
@@ -318,10 +448,11 @@ def evaluate_result(result, data, validation=False,
             objective = np.array([losses[(n_loss_outputs*i)/n_outputs,0,:] for i in range(n_outputs)]).T
 
         eval_dict['objective'] = objective
-
+    ot2 = time.time()
+    # print "objective: {:.3f}".format(ot2-ot1)
     return eval_dict
 
-def evaluate(output_dir, data_path_train, data_path_test=None, binary=False):
+def evaluate(output_dir, data_path_train, data_path_test=None, binary=False, cfg=None):
 
     print '\nEvaluating experiment %s...' % output_dir
 
@@ -365,15 +496,18 @@ def evaluate(output_dir, data_path_train, data_path_test=None, binary=False):
             print 'Evaluating %d...' % (i+1)
 
         try:
+            t1 = time.time()
             eval_train = evaluate_result(result['train'], data_train,
-                validation=False, multiple_exps=multiple_exps, binary=binary)
-
+                validation=False, multiple_exps=multiple_exps, binary=binary, cfg=cfg)
+            t2 = time.time()
+            # print "eval_train: {:.3f}".format(t2-t1)
             eval_valid = evaluate_result(result['train'], data_train,
-                validation=True, multiple_exps=multiple_exps, binary=binary)
-
+                validation=True, multiple_exps=multiple_exps, binary=binary, cfg=cfg)
+            t3 = time.time()
+            # print "eval_valid: {:.3f}".format(t3-t2)
             if data_test is not None:
                 eval_test = evaluate_result(result['test'], data_test,
-                    validation=False, multiple_exps=multiple_exps, binary=binary)
+                    validation=False, multiple_exps=multiple_exps, binary=binary, cfg=cfg)
             else:
                 eval_test = None
 

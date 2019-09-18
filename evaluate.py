@@ -42,7 +42,8 @@ def evaluate(config_file, overwrite=False, filters=None):
     output_dir = cfg['outdir']
 
     if not os.path.isdir(output_dir):
-        raise Exception('Could not find output at path: %s' % output_dir)
+        os.mkdir(output_dir)
+        # raise Exception('Could not find output at path: %s' % output_dir)
 
     data_train = cfg['datadir']+'/'+cfg['dataform']
     data_test = cfg['datadir']+'/'+cfg['data_test']
@@ -56,7 +57,8 @@ def evaluate(config_file, overwrite=False, filters=None):
         eval_results, configs = evaluation.evaluate(output_dir,
                                 data_path_train=data_train,
                                 data_path_test=data_test,
-                                binary=binary)
+                                binary=binary,
+                                cfg=cfg)
         # Save evaluation
         pickle.dump((eval_results, configs), open(eval_path, "wb"))
     else:
@@ -66,7 +68,7 @@ def evaluate(config_file, overwrite=False, filters=None):
         eval_results, configs = pickle.load(open(eval_path, "rb"))
 
     # Sort by alpha
-    #eval_results, configs = sort_by_config(eval_results, configs, 'p_alpha')
+    # eval_results, configs = sort_by_config(eval_results, configs, 'p_alpha')
 
     # Print evaluation results
     if binary:
