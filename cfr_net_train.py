@@ -196,7 +196,7 @@ def train(CFR, sess, train_step, D, I_valid, D_test, logfile, i_exp):
                 acc = 100*(1 - np.mean(np.abs(y_batch - y_pred)))
                 loss_str += ',\tAcc: %.2f%%' % acc
 
-            log(logfile, loss_str)
+            # log(logfile, loss_str)
 
             if np.isnan(obj_loss):
                 log(logfile,'Experiment %d: Objective is NaN. Skipping.' % i_exp)

@@ -212,13 +212,13 @@ def plot_option_correlation(output_dir, diff_opts, results, configs,
 
 def plot_evaluation_cont(results, configs, output_dir, data_train_path, data_test_path, filters=None):
 
-    data_train = load_data(data_train_path)
-    data_test = load_data(data_test_path)
+    # data_train = load_data(data_train_path)
+    # data_test = load_data(data_test_path)
 
-    propensity = {}
-    propensity['train'] = np.mean(data_train['t'])
-    propensity['valid'] = np.mean(data_train['t'])
-    propensity['test'] = np.mean(data_test['t'])
+    # propensity = {}
+    # propensity['train'] = np.mean(data_train['t'])
+    # propensity['valid'] = np.mean(data_train['t'])
+    # propensity['test'] = np.mean(data_test['t'])
 
     ''' Select by filter '''
     filter_str = ''

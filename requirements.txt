@@ -1,0 +1,3 @@
+tensorflow-gpu==0.12.0-rc1
+matplotlib
+tqdm
